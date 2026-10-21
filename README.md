@@ -30,6 +30,20 @@ You don't need to install anything else. No Python or extra runtime is required,
 | **Join by ID** | Paste a lobby ID (or a `steam://joinlobby/...` link) and click **Join** |
 | **Copy my ID** | Copies the ID of the game you're hosting or playing in |
 | **Right-click / Ctrl+C** | Copies the ID of the selected game in the list |
+| **Your game info** | Hosts can set Difficulty, Level and Playstyle, then click **Publish** |
+| **Show:** | Only show games with a certain difficulty or playstyle |
+
+### Game info (difficulty, level, playstyle)
+
+If you're hosting a multiplayer game, you can tell other browser users what kind of game it is:
+
+1. Host a **multiplayer** game (not solo) and click **Refresh**. The browser should say **(you're the host)**.
+2. Pick any of **Difficulty** (Neophyte / Normal / Hardcore), **Level** and **Playstyle** (Story / Farming / Questing / Help Wanted). Every field is optional.
+3. Click **Publish**. Your info shows in everyone's list, and they can filter by it.
+
+While the browser stays open, your info is re-applied automatically when you host a new game. Set a field back to **–** and click Publish to clear it.
+
+There are no free-text fields, only fixed choices. Values the browser doesn't recognize are never shown, so the info can't be used for spam. The info is attached to your Steam lobby and disappears when the game closes. Only people using this browser can see it; the game itself ignores it.
 
 ### Playing with people who aren't on your Steam friends list
 
