@@ -472,7 +472,7 @@ class MainForm : Form
         try
         {
             Process.Start("steam://joinlobby/" + AppId + "/" + id);
-            SetStatus("Asked Steam to join lobby " + id + ". Titan Quest II must already be running.");
+            SetStatus("Joining lobby " + id + "... In the game, pick your character on the character select screen and click Join.");
         }
         catch (Exception ex) { SetStatus("Could not open the Steam join link: " + ex.Message); }
     }

@@ -21,6 +21,7 @@ You don't need to install anything else. No Python or extra runtime is required,
 1. **Start Titan Quest II** and go to the main menu.
 2. Run `TQ2LobbyBrowser.exe`. It searches for open games right away.
 3. Pick a game and click **Join selected**, or double-click it. Steam hands the join to the game.
+4. The game loads and takes you to the **character select** screen. **Pick your character and click Join** there to enter the host's game.
 
 | Option | What it does |
 | --- | --- |
@@ -50,7 +51,7 @@ There are no free-text fields, only fixed choices. Values the browser doesn't re
 You don't need to add anyone as a Steam friend:
 
 1. **Host:** start a multiplayer game set to **Public**, then click **Refresh** in the browser. Your game shows at the top of the list as **Your game**. Click **Copy my ID** and paste the ID into Discord, a forum or a chat.
-2. **Everyone else:** start Titan Quest II, paste the ID into **Join by ID** and click **Join**.
+2. **Everyone else:** start Titan Quest II, paste the ID into **Join by ID** and click **Join**. When the game shows character select, pick your character and click **Join**.
 
 The host's game needs to be **Public**. Steam doesn't let strangers into friends-only or private lobbies, even if they have the ID.
 
