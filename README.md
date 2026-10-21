@@ -70,6 +70,21 @@ The game only publishes a lobby ID and the player count for each game. That mean
 - **Join** opens a `steam://joinlobby/1154030/<lobby id>` link, which is the same thing that happens when you accept a friend's invite.
 - It only connects to Steam while searching and disconnects afterwards. That way Steam won't think the game is already running when you click Play.
 
+## Privacy
+
+The browser doesn't collect or share any personal information.
+
+- **No servers, no telemetry.** It only talks to the Steam client running on your PC, using Steam's normal lobby system (the same one the game uses). It has no internet code of its own.
+- **What hosts share:** only the optional Difficulty, Level and Playstyle, and only after clicking **Publish**. They're stored as small numbers on the host's Steam lobby and disappear when the game closes. There's no free text.
+- **Lobby IDs** are random numbers Steam gives each game session. They don't identify you, and they stop working when the game closes.
+- **Your Steam ID** is read only on your own PC to find which lobby is yours. It's never shown, copied or sent anywhere.
+- **Other players' names and Steam IDs** aren't shown in the browser.
+
+Good to know (this is how the game and Steam work, not the browser):
+
+- **Joining a game is a normal Titan Quest II multiplayer session.** The people in it see your character and Steam name, the same as joining through a friend invite. The game connects through Steam's relay network rather than direct IP connections.
+- **Public means public.** Anyone with the browser, or with an ID you post online, can join a Public game. To play only with people you know, use the game's Friends or Private setting. Those games don't appear in the browser.
+
 ## Building from source
 
 There's one source file, and the compiler that ships with Windows can build it:
