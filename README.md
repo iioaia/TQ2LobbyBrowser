@@ -27,6 +27,18 @@ You don't need to install anything else. No Python or extra runtime is required,
 | **Refresh** | Searches again for open games worldwide |
 | **Hide full games** | Hides games that have no free slots (on by default) |
 | **Auto-refresh (30s)** | Refreshes the list every 30 seconds |
+| **Join by ID** | Paste a lobby ID (or a `steam://joinlobby/...` link) and click **Join** |
+| **Copy my ID** | Copies the ID of the game you're hosting or playing in |
+| **Right-click / Ctrl+C** | Copies the ID of the selected game in the list |
+
+### Playing with people who aren't on your Steam friends list
+
+You don't need to add anyone as a Steam friend:
+
+1. **Host:** start a multiplayer game set to **Public**, then click **Refresh** in the browser. Your game shows at the top of the list as **Your game**. Click **Copy my ID** and paste the ID into Discord, a forum or a chat.
+2. **Everyone else:** start Titan Quest II, paste the ID into **Join by ID** and click **Join**.
+
+The host's game needs to be **Public**. Steam doesn't let strangers into friends-only or private lobbies, even if they have the ID.
 
 ### "Windows protected your PC"
 

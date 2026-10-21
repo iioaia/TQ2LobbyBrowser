@@ -25,6 +25,13 @@ static class Steam
     [DllImport(Dll)] public static extern void SteamAPI_RunCallbacks();
     [DllImport(Dll)] public static extern IntPtr SteamAPI_SteamMatchmaking_v009();
     [DllImport(Dll)] public static extern IntPtr SteamAPI_SteamUtils_v010();
+    [DllImport(Dll)] public static extern IntPtr SteamAPI_SteamUser_v023();
+    [DllImport(Dll)] public static extern IntPtr SteamAPI_SteamFriends_v017();
+    [DllImport(Dll)] public static extern ulong SteamAPI_ISteamUser_GetSteamID(IntPtr self);
+
+    [DllImport(Dll)]
+    [return: MarshalAs(UnmanagedType.I1)]
+    public static extern bool SteamAPI_ISteamFriends_GetFriendGamePlayed(IntPtr self, ulong steamId, out FriendGameInfo info);
     [DllImport(Dll)] public static extern void SteamAPI_ISteamMatchmaking_AddRequestLobbyListDistanceFilter(IntPtr self, int filter);
     [DllImport(Dll)] public static extern void SteamAPI_ISteamMatchmaking_AddRequestLobbyListResultCountFilter(IntPtr self, int max);
     [DllImport(Dll)] public static extern ulong SteamAPI_ISteamMatchmaking_RequestLobbyList(IntPtr self);
@@ -39,6 +46,16 @@ static class Steam
     [DllImport(Dll)]
     [return: MarshalAs(UnmanagedType.I1)]
     public static extern bool SteamAPI_ISteamUtils_GetAPICallResult(IntPtr self, ulong call, ref uint result, int size, int callbackId, [MarshalAs(UnmanagedType.I1)] out bool failed);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct FriendGameInfo
+    {
+        public ulong GameId;
+        public uint GameIp;
+        public ushort GamePort;
+        public ushort QueryPort;
+        public ulong LobbyId;
+    }
 
     public const int LobbyMatchListCallback = 510;
     public const int DistanceWorldwide = 3;
@@ -61,6 +78,11 @@ class MainForm : Form
     readonly CheckBox hideFull = new CheckBox();
     readonly CheckBox autoRefresh = new CheckBox();
     readonly Label status = new Label();
+    readonly TextBox joinIdBox = new TextBox();
+    readonly Button joinIdButton = new Button();
+    readonly Label myGameLabel = new Label();
+    readonly Button copyMyIdButton = new Button();
+    readonly ContextMenuStrip listMenu = new ContextMenuStrip();
     readonly Timer pollTimer = new Timer();
     readonly Timer autoTimer = new Timer();
 
@@ -69,11 +91,12 @@ class MainForm : Form
     DateTime pendingDeadline;
     bool steamUp;
     List<Lobby> lobbies = new List<Lobby>();
+    ulong myLobby;
 
     public MainForm()
     {
         Text = "Titan Quest II - Lobby Browser";
-        ClientSize = new Size(520, 480);
+        ClientSize = new Size(560, 540);
         MinimumSize = new Size(420, 300);
         Font = new Font("Segoe UI", 9f);
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
@@ -97,7 +120,31 @@ class MainForm : Form
         autoRefresh.CheckedChanged += delegate { autoTimer.Enabled = autoRefresh.Checked; };
         top.Controls.AddRange(new Control[] { refreshButton, joinButton, hideFull, autoRefresh });
 
+        var joinRow = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 34, Padding = new Padding(6, 0, 6, 0), WrapContents = false };
+        var joinLabel = new Label { Text = "Join by ID:", AutoSize = true, Margin = new Padding(3, 7, 3, 3) };
+        joinIdBox.Width = 230;
+        joinIdBox.Margin = new Padding(3, 4, 3, 3);
+        joinIdBox.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; JoinById(); } };
+        joinIdButton.Text = "Join";
+        joinIdButton.AutoSize = true;
+        joinIdButton.Click += delegate { JoinById(); };
+        joinRow.Controls.AddRange(new Control[] { joinLabel, joinIdBox, joinIdButton });
+
+        var myRow = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 34, Padding = new Padding(6, 0, 6, 0), WrapContents = false };
+        myGameLabel.AutoSize = true;
+        myGameLabel.Margin = new Padding(3, 7, 3, 3);
+        copyMyIdButton.Text = "Copy my ID";
+        copyMyIdButton.AutoSize = true;
+        copyMyIdButton.Click += delegate { CopyId(myLobby); };
+        myRow.Controls.AddRange(new Control[] { myGameLabel, copyMyIdButton });
+        UpdateMyGame();
+
+        listMenu.Items.Add("Copy lobby ID", null, delegate { if (list.SelectedItems.Count > 0) CopyId((ulong)list.SelectedItems[0].Tag); });
+        listMenu.Items.Add("Join", null, delegate { JoinSelected(); });
+
         list.Dock = DockStyle.Fill;
+        list.ContextMenuStrip = listMenu;
+        list.KeyDown += (s, e) => { if (e.Control && e.KeyCode == Keys.C && list.SelectedItems.Count > 0) CopyId((ulong)list.SelectedItems[0].Tag); };
         list.View = View.Details;
         list.FullRowSelect = true;
         list.MultiSelect = false;
@@ -105,6 +152,7 @@ class MainForm : Form
         list.Columns.Add("Players", 80);
         list.Columns.Add("Open slots", 90);
         list.Columns.Add("Lobby ID", 220);
+        list.Columns.Add("", 90);
         list.SelectedIndexChanged += delegate { joinButton.Enabled = list.SelectedItems.Count > 0; };
         list.DoubleClick += delegate { JoinSelected(); };
 
@@ -114,6 +162,8 @@ class MainForm : Form
         status.Text = "Start Titan Quest II first, then pick a game and click Join (or double-click it).";
 
         Controls.Add(list);
+        Controls.Add(myRow);
+        Controls.Add(joinRow);
         Controls.Add(top);
         Controls.Add(status);
 
@@ -140,6 +190,7 @@ class MainForm : Form
         steamUp = true;
         matchmaking = Steam.SteamAPI_SteamMatchmaking_v009();
         utils = Steam.SteamAPI_SteamUtils_v010();
+        FindMyLobby();
         Steam.SteamAPI_ISteamMatchmaking_AddRequestLobbyListDistanceFilter(matchmaking, Steam.DistanceWorldwide);
         Steam.SteamAPI_ISteamMatchmaking_AddRequestLobbyListResultCountFilter(matchmaking, 500);
         pendingCall = Steam.SteamAPI_ISteamMatchmaking_RequestLobbyList(matchmaking);
@@ -175,9 +226,49 @@ class MainForm : Form
                 Limit = Steam.SteamAPI_ISteamMatchmaking_GetLobbyMemberLimit(matchmaking, id)
             });
         }
-        found.Sort((a, b) => b.Players != a.Players ? b.Players.CompareTo(a.Players) : a.Id.CompareTo(b.Id));
+        // Own game first, then fullest games first.
+        found.Sort((a, b) => (a.Id == myLobby) != (b.Id == myLobby) ? (a.Id == myLobby ? -1 : 1)
+                           : b.Players != a.Players ? b.Players.CompareTo(a.Players) : a.Id.CompareTo(b.Id));
         lobbies = found;
         Finish(null);
+    }
+
+    // Steam knows which lobby the player's running game is in (the same info friends' "Join Game" uses).
+    void FindMyLobby()
+    {
+        myLobby = 0;
+        ulong me = Steam.SteamAPI_ISteamUser_GetSteamID(Steam.SteamAPI_SteamUser_v023());
+        Steam.FriendGameInfo info;
+        if (Steam.SteamAPI_ISteamFriends_GetFriendGamePlayed(Steam.SteamAPI_SteamFriends_v017(), me, out info) &&
+            info.GameId == ulong.Parse(AppId))
+            myLobby = info.LobbyId;
+        UpdateMyGame();
+    }
+
+    void UpdateMyGame()
+    {
+        myGameLabel.Text = myLobby != 0 ? "Your game's ID: " + myLobby : "Your game's ID: (host or join a game, then Refresh)";
+        copyMyIdButton.Enabled = myLobby != 0;
+    }
+
+    void CopyId(ulong id)
+    {
+        if (id == 0) return;
+        try { Clipboard.SetText(id.ToString()); SetStatus("Copied lobby ID " + id + " to the clipboard. Share it so others can use Join by ID."); }
+        catch (Exception ex) { SetStatus("Could not copy to the clipboard: " + ex.Message); }
+    }
+
+    // Accepts a bare lobby ID or a full steam://joinlobby/1154030/<id>/... link.
+    void JoinById()
+    {
+        Match m = Regex.Match(joinIdBox.Text, @"\d{15,20}");
+        ulong id;
+        if (!m.Success || !ulong.TryParse(m.Value, out id))
+        {
+            SetStatus("That doesn't look like a lobby ID. It should be a long number like 109775241759430410.");
+            return;
+        }
+        Join(id);
     }
 
     // Shut Steam down after every search so Steam doesn't treat this tool as the running game.
@@ -201,7 +292,8 @@ class MainForm : Form
             totalPlayers += l.Players;
             int open = Math.Max(0, l.Limit - l.Players);
             if (hideFull.Checked && open == 0) continue;
-            var item = new ListViewItem(new[] { l.Players + " / " + l.Limit, open.ToString(), l.Id.ToString() });
+            var item = new ListViewItem(new[] { l.Players + " / " + l.Limit, open.ToString(), l.Id.ToString(), l.Id == myLobby ? "Your game" : "" });
+            if (l.Id == myLobby) item.Font = new Font(list.Font, FontStyle.Bold);
             item.Tag = l.Id;
             list.Items.Add(item);
             if (l.Id == selected) item.Selected = true;
@@ -216,8 +308,16 @@ class MainForm : Form
     void JoinSelected()
     {
         if (list.SelectedItems.Count == 0) return;
-        ulong id = (ulong)list.SelectedItems[0].Tag;
-        try { Process.Start("steam://joinlobby/" + AppId + "/" + id); }
+        Join((ulong)list.SelectedItems[0].Tag);
+    }
+
+    void Join(ulong id)
+    {
+        try
+        {
+            Process.Start("steam://joinlobby/" + AppId + "/" + id);
+            SetStatus("Asked Steam to join lobby " + id + ". Titan Quest II must already be running.");
+        }
         catch (Exception ex) { SetStatus("Could not open the Steam join link: " + ex.Message); }
     }
 
