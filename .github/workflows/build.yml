@@ -1,0 +1,80 @@
+# Builds TQ2LobbyBrowser.exe on GitHub's servers.
+# - Every push that changes the code: test build (exe kept as a workflow artifact).
+# - "Run workflow" from the Actions tab with a version (e.g. v1.3.0): build, attest
+#   provenance, and create a DRAFT release with the exe and its SHA-256 for review.
+name: Build
+
+on:
+  push:
+    branches: [main, staging]
+    paths: ["TQ2LobbyBrowser.cs", ".github/workflows/build.yml"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. v1.3.0"
+        required: true
+
+permissions:
+  contents: write      # create the draft release
+  id-token: write      # sign the build attestation
+  attestations: write  # store the build attestation
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check version
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ($env:VERSION -notmatch '^v\d+\.\d+\.\d+$') { throw "Version must look like v1.3.0, got '$env:VERSION'" }
+
+      # Same command as "Building from source" in the README, using the compiler that ships with Windows.
+      - name: Build
+        run: |
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /platform:x64 /optimize+ /out:TQ2LobbyBrowser.exe TQ2LobbyBrowser.cs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: SHA-256
+        id: hash
+        run: |
+          $hash = (Get-FileHash TQ2LobbyBrowser.exe -Algorithm SHA256).Hash.ToLower()
+          "sha256=$hash" >> $env:GITHUB_OUTPUT
+          "SHA-256: $hash" >> $env:GITHUB_STEP_SUMMARY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TQ2LobbyBrowser
+          path: TQ2LobbyBrowser.exe
+
+      - name: Attest build provenance
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: TQ2LobbyBrowser.exe
+
+      - name: Create draft release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          SHA256: ${{ steps.hash.outputs.sha256 }}
+        run: |
+          $notes = @'
+          **What's new**
+          - (fill in before publishing)
+
+          **Download:** TQ2LobbyBrowser.exe below.
+
+          **SHA-256:** SHA256_HERE
+
+          This exe was built by GitHub Actions directly from the source code in this repository, from commit COMMIT_HERE. Anyone can verify that with the GitHub CLI:
+
+              gh attestation verify TQ2LobbyBrowser.exe --repo REPO_HERE
+          '@
+          $notes = $notes -replace 'SHA256_HERE', $env:SHA256 -replace 'COMMIT_HERE', $env:GITHUB_SHA -replace 'REPO_HERE', $env:GITHUB_REPOSITORY
+          Set-Content -Path notes.md -Value $notes -Encoding utf8
+          gh release create $env:VERSION TQ2LobbyBrowser.exe --draft --target $env:GITHUB_SHA --title "TQ2 Lobby Browser $env:VERSION" --notes-file notes.md

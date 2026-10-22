@@ -97,6 +97,16 @@ Good to know (this is how the game and Steam work, not the browser):
 - **Joining a game is a normal Titan Quest II multiplayer session.** The people in it see your character and Steam name, the same as joining through a friend invite. The game connects through Steam's relay network rather than direct IP connections.
 - **Public means public.** Anyone with the browser, or with an ID you post online, can join a Public game. To play only with people you know, use the game's Friends or Private setting. Those games don't appear in the browser.
 
+## Verifying a download
+
+Starting with the first release after v1.2.1, release exes are built by GitHub Actions directly from the source code in this repository, not on anyone's PC. Each one comes with a [build attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations): a record signed by GitHub that ties the exact file to the commit and workflow ([`build.yml`](.github/workflows/build.yml)) that produced it. To check a download with the [GitHub CLI](https://cli.github.com/):
+
+```bat
+gh attestation verify TQ2LobbyBrowser.exe --repo iioaia/TQ2LobbyBrowser
+```
+
+Each release also lists the exe's SHA-256 checksum. Windows' built-in compiler stamps every build with the time it was built, so an exe you build yourself won't have the same checksum. The attestation is the proof that a release matches the code.
+
 ## Building from source
 
 There's one source file, and the compiler that ships with Windows can build it:
