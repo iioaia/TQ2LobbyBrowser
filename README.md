@@ -85,7 +85,7 @@ The browser is a small, open-source program. Here's exactly what it does and doe
 - **Writes nothing to your PC.** No files, no settings and no registry changes. The only thing it reads is Steam's install location from the registry and Steam's library list, to find your game folder.
 - **No internet connections of its own.** It only talks to the Steam client already running on your PC. There are no servers, no telemetry and no auto-updates.
 - **Nothing to install or uninstall.** To remove it, delete the exe.
-- **VirusTotal:** [67 of 71 engines report it clean](https://www.virustotal.com/gui/file/2bf8293d02acc4bdde0895f17e143854444c08e4684203895a7eba5f3450310b) (v1.3.0). The 4 detections (McAfee, SecureAge, Elastic, MaxSecure) come from reputation and machine-learning scanners that flag new, unsigned programs, not from anything the tool does. Microsoft Defender, Kaspersky, ESET, Bitdefender and Norton report it clean. McAfee detections are reported to McAfee as false positives.
+- **VirusTotal:** [68 of 71 engines report it clean](https://www.virustotal.com/gui/file/2c47ce412518e803416918055662a9c1be77b40ed5965fb4e1d13a18e7089f99) (v1.4.0). The 3 detections (McAfee, SecureAge, Elastic) come from reputation and machine-learning scanners that flag new, unsigned programs, not from anything the tool does. Microsoft Defender, Kaspersky, ESET, Bitdefender and Norton report it clean. McAfee detections are reported to McAfee as false positives.
 - **All the code is here.** It's one readable file, [`TQ2LobbyBrowser.cs`](TQ2LobbyBrowser.cs), and you can [build the exe yourself](#building-from-source) with the compiler that comes with Windows instead of downloading it.
 
 ## Privacy
