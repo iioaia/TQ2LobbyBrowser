@@ -7,7 +7,7 @@ name: Build
 on:
   push:
     branches: [main, staging]
-    paths: ["TQ2LobbyBrowser.cs", ".github/workflows/build.yml"]
+    paths: ["TQ2LobbyBrowser.cs", "icon.ico", ".github/workflows/build.yml"]
   workflow_dispatch:
     inputs:
       version:
@@ -31,11 +31,14 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           if ($env:VERSION -notmatch '^v\d+\.\d+\.\d+$') { throw "Version must look like v1.3.0, got '$env:VERSION'" }
+          # The exe shows Program.Version in its title bar, so it must match the release.
+          $code = [regex]::Match((Get-Content TQ2LobbyBrowser.cs -Raw), 'const string Version = "([^"]+)"').Groups[1].Value
+          if ("v$code" -ne $env:VERSION) { throw "Program.Version in TQ2LobbyBrowser.cs is '$code' but the release is '$env:VERSION'. Update one of them." }
 
       # Same command as "Building from source" in the README, using the compiler that ships with Windows.
       - name: Build
         run: |
-          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /platform:x64 /optimize+ /out:TQ2LobbyBrowser.exe TQ2LobbyBrowser.cs
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /platform:x64 /optimize+ /win32icon:icon.ico /out:TQ2LobbyBrowser.exe TQ2LobbyBrowser.cs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: SHA-256

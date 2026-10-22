@@ -32,7 +32,12 @@ You don't need to install anything else. No Python or extra runtime is required,
 | **Copy my ID** | Copies the ID of the game you're hosting or playing in |
 | **Right-click / Ctrl+C** | Copies the ID of the selected game in the list |
 | **Your game info** | Hosts can set Difficulty, Level and Playstyle, then click **Publish** |
-| **Show:** | Only show games with a certain difficulty or playstyle |
+| **Show:** | Only show games within a certain distance, or with a certain difficulty or playstyle |
+| **v… · Updates** | Opens the releases page in your web browser, so you can see if there's a newer version |
+
+### Distance
+
+The **Distance** column shows roughly how far away each game's host is: **Near** (same region), **Regional** (nearby regions), **Far** (about half the world away) or **Very far**. The list is sorted nearest first, since closer games usually lag less. It's based on Steam's region filters, which use each player's approximate location. It isn't an exact ping.
 
 ### Game info (difficulty, level, playstyle)
 
@@ -66,7 +71,7 @@ The game only publishes a lobby ID and the player count for each game. That mean
 ## How it works
 
 - It finds your Titan Quest II install through Steam and loads Valve's `steam_api64.dll` from the game's own folder. No game or Steam files are included or modified.
-- It asks Steam for the game's public lobbies (AppID `1154030`), worldwide.
+- It asks Steam for the game's public lobbies (AppID `1154030`). It searches four times, from Steam's "close" region filter out to worldwide, and labels each game with the closest search that found it.
 - **Join** opens a `steam://joinlobby/1154030/<lobby id>` link, which is the same thing that happens when you accept a friend's invite.
 - Each search runs in a short-lived background copy of the browser that connects to Steam, gets the list and exits within a few seconds. Steam counts any program connected as Titan Quest II as "the game running" until it exits, so this keeps Steam from showing the game as running while only the browser is open, and lets you start or close the game normally.
 - **Join** checks that Titan Quest II is running first. With the game closed, Steam has nothing to hand the join to.
@@ -113,7 +118,7 @@ Each release also lists the exe's SHA-256 checksum. Windows' built-in compiler s
 There's one source file, and the compiler that ships with Windows can build it:
 
 ```bat
-C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /target:winexe /platform:x64 /optimize+ /out:TQ2LobbyBrowser.exe TQ2LobbyBrowser.cs
+C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /target:winexe /platform:x64 /optimize+ /win32icon:icon.ico /out:TQ2LobbyBrowser.exe TQ2LobbyBrowser.cs
 ```
 
 ## Disclaimer

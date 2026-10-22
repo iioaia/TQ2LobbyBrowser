@@ -1,17 +1,26 @@
 // Titan Quest II Lobby Browser
 // Lists public Steam lobbies for Titan Quest II (AppID 1154030) and joins them via steam://joinlobby.
 // Uses Valve's steam_api64.dll from the player's own Titan Quest II install (nothing redistributed).
-// Build: csc /target:winexe /platform:x64 /optimize+ TQ2LobbyBrowser.cs
+// Build: csc /target:winexe /platform:x64 /optimize+ /win32icon:icon.ico TQ2LobbyBrowser.cs
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
 using Microsoft.Win32;
+
+// Shown in the exe's Properties > Details in Windows.
+[assembly: AssemblyTitle("TQ2 Lobby Browser")]
+[assembly: AssemblyProduct("TQ2 Lobby Browser")]
+[assembly: AssemblyDescription("Lists public Titan Quest II Steam lobbies")]
+[assembly: AssemblyCopyright("MIT License - github.com/iioaia/TQ2LobbyBrowser")]
+[assembly: AssemblyVersion(Program.Version + ".0")]
+[assembly: AssemblyFileVersion(Program.Version)]
 
 static class Steam
 {
@@ -68,6 +77,8 @@ static class Steam
     }
 
     public const int LobbyMatchListCallback = 510;
+    // ELobbyDistanceFilter: Close (same region), Default (nearby regions), Far (~half the globe), Worldwide.
+    public const int DistanceClose = 0;
     public const int DistanceWorldwide = 3;
 }
 
@@ -76,6 +87,7 @@ class Lobby
     public ulong Id;
     public int Players;
     public int Limit;
+    public int Distance = Steam.DistanceWorldwide;  // closest Steam distance filter that returned this lobby
     // Host-published info; -1 = not set (or invalid, which is treated the same).
     public int Difficulty = -1;
     public int Level = -1;
@@ -102,6 +114,9 @@ static class GameInfo
         return s != null && s.Length <= 3 && int.TryParse(s, out v) && v >= min && v <= max ? v : -1;
     }
 
+    // Indexed by Steam distance filter (Lobby.Distance).
+    public static readonly string[] Distances = { "Near", "Regional", "Far", "Very far" };
+
     public static string Name(string[] names, int index) { return index >= 0 && index < names.Length ? names[index] : ""; }
 }
 
@@ -126,6 +141,8 @@ class MainForm : Form
     readonly Button publishButton = new Button();
     readonly ComboBox difficultyFilter = new ComboBox();
     readonly ComboBox playstyleFilter = new ComboBox();
+    readonly ComboBox distanceFilter = new ComboBox();
+    readonly LinkLabel updatesLink = new LinkLabel();
     readonly Timer autoTimer = new Timer();
 
     bool busy;            // a Steam worker process is running
@@ -138,8 +155,8 @@ class MainForm : Form
 
     public MainForm()
     {
-        Text = "Titan Quest II - Lobby Browser";
-        ClientSize = new Size(700, 600);
+        Text = "Titan Quest II - Lobby Browser v" + Program.Version;
+        ClientSize = new Size(780, 600);
         MinimumSize = new Size(420, 300);
         Font = new Font("Segoe UI", 9f);
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
@@ -161,7 +178,12 @@ class MainForm : Form
         autoRefresh.AutoSize = true;
         autoRefresh.Margin = new Padding(12, 6, 3, 3);
         autoRefresh.CheckedChanged += delegate { autoTimer.Enabled = autoRefresh.Checked; };
-        top.Controls.AddRange(new Control[] { refreshButton, joinButton, hideFull, autoRefresh });
+        // Opens the releases page in the browser; the tool itself never goes online.
+        updatesLink.Text = "v" + Program.Version + " · Updates";
+        updatesLink.AutoSize = true;
+        updatesLink.Margin = new Padding(24, 7, 3, 3);
+        updatesLink.LinkClicked += delegate { OpenUrl(Program.ReleasesUrl); };
+        top.Controls.AddRange(new Control[] { refreshButton, joinButton, hideFull, autoRefresh, updatesLink });
 
         var joinRow = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 34, Padding = new Padding(6, 0, 6, 0), WrapContents = false };
         var joinLabel = new Label { Text = "Join by ID:", AutoSize = true, Margin = new Padding(3, 7, 3, 3) };
@@ -198,9 +220,12 @@ class MainForm : Form
         var filterRow = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 34, Padding = new Padding(6, 0, 6, 0), WrapContents = false };
         SetupCombo(difficultyFilter, "Any difficulty", GameInfo.Difficulties, 110);
         SetupCombo(playstyleFilter, "Any playstyle", GameInfo.Playstyles, 110);
+        // Item index - 1 is the farthest distance shown (Near only = Close, ...).
+        SetupCombo(distanceFilter, "Any distance", new[] { "Near only", "Up to regional", "Up to far" }, 110);
         difficultyFilter.SelectedIndexChanged += delegate { Populate(); };
         playstyleFilter.SelectedIndexChanged += delegate { Populate(); };
-        filterRow.Controls.AddRange(new Control[] { RowLabel("Show:"), difficultyFilter, playstyleFilter });
+        distanceFilter.SelectedIndexChanged += delegate { Populate(); };
+        filterRow.Controls.AddRange(new Control[] { RowLabel("Show:"), distanceFilter, difficultyFilter, playstyleFilter });
 
         listMenu.Items.Add("Copy lobby ID", null, delegate { if (list.SelectedItems.Count > 0) CopyId((ulong)list.SelectedItems[0].Tag); });
         listMenu.Items.Add("Join", null, delegate { JoinSelected(); });
@@ -214,6 +239,7 @@ class MainForm : Form
         list.HideSelection = false;
         list.Columns.Add("Players", 60);
         list.Columns.Add("Open", 50);
+        list.Columns.Add("Distance", 75);
         list.Columns.Add("Difficulty", 80);
         list.Columns.Add("Level", 50);
         list.Columns.Add("Playstyle", 90);
@@ -293,7 +319,7 @@ class MainForm : Form
         using (var p = Process.Start(psi))
         {
             var read = p.StandardOutput.ReadToEndAsync();
-            if (!read.Wait(25000))
+            if (!read.Wait(60000))  // up to four Steam searches, one per distance
             {
                 try { p.Kill(); } catch { }
                 throw new Exception("Steam did not answer in time. Try Refresh again.");
@@ -315,11 +341,11 @@ class MainForm : Form
             string[] f = line.Split(' ');
             if (f[0] == "ERR") error = line.Substring(4);
             else if (f[0] == "ME" && f.Length == 3) { ulong.TryParse(f[1], out lobby); host = f[2] == "1"; }
-            else if (f[0] == "L" && f.Length == 7)
+            else if (f[0] == "L" && f.Length == 8)
                 found.Add(new Lobby
                 {
-                    Id = ulong.Parse(f[1]), Players = int.Parse(f[2]), Limit = int.Parse(f[3]),
-                    Difficulty = int.Parse(f[4]), Level = int.Parse(f[5]), Playstyle = int.Parse(f[6])
+                    Id = ulong.Parse(f[1]), Players = int.Parse(f[2]), Limit = int.Parse(f[3]), Distance = int.Parse(f[4]),
+                    Difficulty = int.Parse(f[5]), Level = int.Parse(f[6]), Playstyle = int.Parse(f[7])
                 });
         }
         if (error != null)
@@ -331,8 +357,9 @@ class MainForm : Form
         myLobby = lobby;
         iAmHost = host;
         UpdateMyGame();
-        // Own game first, then fullest games first.
+        // Own game first, then nearest, then fullest.
         found.Sort((a, b) => (a.Id == myLobby) != (b.Id == myLobby) ? (a.Id == myLobby ? -1 : 1)
+                           : a.Distance != b.Distance ? a.Distance.CompareTo(b.Distance)
                            : b.Players != a.Players ? b.Players.CompareTo(a.Players) : a.Id.CompareTo(b.Id));
         lobbies = found;
         // Until the host publishes from this window, show what their lobby already has
@@ -396,6 +423,7 @@ class MainForm : Form
         list.Items.Clear();
         int shown = 0, totalPlayers = 0;
         int wantDifficulty = difficultyFilter.SelectedIndex - 1, wantPlaystyle = playstyleFilter.SelectedIndex - 1;
+        int maxDistance = distanceFilter.SelectedIndex - 1;
         foreach (var l in lobbies)
         {
             totalPlayers += l.Players;
@@ -405,9 +433,10 @@ class MainForm : Form
                 if (hideFull.Checked && open == 0) continue;
                 if (wantDifficulty >= 0 && l.Difficulty != wantDifficulty) continue;
                 if (wantPlaystyle >= 0 && l.Playstyle != wantPlaystyle) continue;
+                if (maxDistance >= 0 && l.Distance > maxDistance) continue;
             }
             var item = new ListViewItem(new[] {
-                l.Players + " / " + l.Limit, open.ToString(),
+                l.Players + " / " + l.Limit, open.ToString(), GameInfo.Name(GameInfo.Distances, l.Distance),
                 GameInfo.Name(GameInfo.Difficulties, l.Difficulty), l.Level > 0 ? l.Level.ToString() : "",
                 GameInfo.Name(GameInfo.Playstyles, l.Playstyle),
                 l.Id.ToString(), l.Id == myLobby ? "Your game" : "" });
@@ -438,12 +467,14 @@ class MainForm : Form
                 "TQ2 Lobby Browser", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        try
-        {
-            Process.Start("steam://joinlobby/" + AppId + "/" + id);
+        if (OpenUrl("steam://joinlobby/" + AppId + "/" + id))
             SetStatus("Joining lobby " + id + "... In the game, pick your character on the character select screen and click Join.");
-        }
-        catch (Exception ex) { SetStatus("Could not open the Steam join link: " + ex.Message); }
+    }
+
+    bool OpenUrl(string url)
+    {
+        try { Process.Start(url); return true; }
+        catch (Exception ex) { SetStatus("Could not open " + url + ": " + ex.Message); return false; }
     }
 
     void SetStatus(string text) { status.Text = text; }
@@ -493,33 +524,46 @@ static class SteamWorker
             WriteField(mm, myLobby, GameInfo.PlaystyleKey, playstyle, 0);
         }
 
-        Steam.SteamAPI_ISteamMatchmaking_AddRequestLobbyListDistanceFilter(mm, Steam.DistanceWorldwide);
-        Steam.SteamAPI_ISteamMatchmaking_AddRequestLobbyListResultCountFilter(mm, 500);
-        ulong call = Steam.SteamAPI_ISteamMatchmaking_RequestLobbyList(mm);
-        DateTime deadline = DateTime.Now.AddSeconds(15);
-        bool failed;
-        while (!Steam.SteamAPI_ISteamUtils_IsAPICallCompleted(utils, call, out failed))
+        // Steam has no ping for lobbies, but it can filter by region distance (based on each player's location).
+        // Searching from nearest to worldwide tags every lobby with the closest filter that finds it.
+        var distance = new Dictionary<ulong, int>();
+        var order = new List<ulong>();
+        for (int filter = Steam.DistanceClose; filter <= Steam.DistanceWorldwide; filter++)
         {
-            Steam.SteamAPI_RunCallbacks();
-            if (DateTime.Now > deadline)
+            Steam.SteamAPI_ISteamMatchmaking_AddRequestLobbyListDistanceFilter(mm, filter);
+            Steam.SteamAPI_ISteamMatchmaking_AddRequestLobbyListResultCountFilter(mm, 500);
+            ulong call = Steam.SteamAPI_ISteamMatchmaking_RequestLobbyList(mm);
+            DateTime deadline = DateTime.Now.AddSeconds(15);
+            bool failed;
+            while (!Steam.SteamAPI_ISteamUtils_IsAPICallCompleted(utils, call, out failed))
             {
-                Console.WriteLine("ERR Steam did not answer in time. Try Refresh again.");
+                Steam.SteamAPI_RunCallbacks();
+                if (DateTime.Now > deadline)
+                {
+                    Console.WriteLine("ERR Steam did not answer in time. Try Refresh again.");
+                    return 1;
+                }
+                System.Threading.Thread.Sleep(50);
+            }
+            uint count = 0;
+            if (!Steam.SteamAPI_ISteamUtils_GetAPICallResult(utils, call, ref count, 4, Steam.LobbyMatchListCallback, out failed) || failed)
+            {
+                Console.WriteLine("ERR The lobby search failed. Try Refresh again.");
                 return 1;
             }
-            System.Threading.Thread.Sleep(50);
+            for (int i = 0; i < count; i++)
+            {
+                ulong id = Steam.SteamAPI_ISteamMatchmaking_GetLobbyByIndex(mm, i);
+                if (!distance.ContainsKey(id)) { distance[id] = filter; order.Add(id); }
+            }
         }
-        uint count = 0;
-        if (!Steam.SteamAPI_ISteamUtils_GetAPICallResult(utils, call, ref count, 4, Steam.LobbyMatchListCallback, out failed) || failed)
+        // Read lobby details after the last (worldwide) search, which returned every lobby.
+        foreach (ulong id in order)
         {
-            Console.WriteLine("ERR The lobby search failed. Try Refresh again.");
-            return 1;
-        }
-        for (int i = 0; i < count; i++)
-        {
-            ulong id = Steam.SteamAPI_ISteamMatchmaking_GetLobbyByIndex(mm, i);
             Console.WriteLine("L " + id + " " +
                 Steam.SteamAPI_ISteamMatchmaking_GetNumLobbyMembers(mm, id) + " " +
                 Steam.SteamAPI_ISteamMatchmaking_GetLobbyMemberLimit(mm, id) + " " +
+                distance[id] + " " +
                 GameInfo.Read(mm, id, GameInfo.DifficultyKey, 0, GameInfo.Difficulties.Length - 1) + " " +
                 GameInfo.Read(mm, id, GameInfo.LevelKey, 1, GameInfo.MaxLevel) + " " +
                 GameInfo.Read(mm, id, GameInfo.PlaystyleKey, 0, GameInfo.Playstyles.Length - 1));
@@ -540,6 +584,9 @@ static class SteamWorker
 
 static class Program
 {
+    // Release workflow checks that the version it's given matches this.
+    public const string Version = "1.4.0";
+    public const string ReleasesUrl = "https://github.com/iioaia/TQ2LobbyBrowser/releases/latest";
     const string AppId = "1154030";
     const string DllSubPath = @"TQ2\Binaries\Win64\wrapper\THQNOnline\steam\steam_api64.dll";
 
