@@ -126,13 +126,11 @@ class MainForm : Form
     readonly Button publishButton = new Button();
     readonly ComboBox difficultyFilter = new ComboBox();
     readonly ComboBox playstyleFilter = new ComboBox();
-    readonly Timer pollTimer = new Timer();
     readonly Timer autoTimer = new Timer();
 
-    IntPtr matchmaking, utils;
-    ulong pendingCall;
-    DateTime pendingDeadline;
-    bool steamUp;
+    bool busy;            // a Steam worker process is running
+    bool refreshQueued;   // refresh again when the current one finishes
+    bool publishClicked;  // report "host a game first" if Publish didn't apply
     List<Lobby> lobbies = new List<Lobby>();
     ulong myLobby;
     bool iAmHost;
@@ -237,10 +235,8 @@ class MainForm : Form
         Controls.Add(top);
         Controls.Add(status);
 
-        pollTimer.Interval = 50;
-        pollTimer.Tick += delegate { Poll(); };
         autoTimer.Interval = 30000;
-        autoTimer.Tick += delegate { if (!pollTimer.Enabled) StartRefresh(); };
+        autoTimer.Tick += delegate { if (!busy) StartRefresh(); };
 
         Shown += delegate { StartRefresh(); };
     }
@@ -260,68 +256,81 @@ class MainForm : Form
         return new Label { Text = text, AutoSize = true, Margin = new Padding(3, 7, 3, 3) };
     }
 
-    bool InitSteam()
-    {
-        if (steamUp) return true;
-        Environment.SetEnvironmentVariable("SteamAppId", AppId);
-        Environment.SetEnvironmentVariable("SteamGameId", AppId);
-        var err = new byte[1024];
-        int rc = Steam.SteamAPI_InitFlat(err);
-        if (rc != 0)
-        {
-            string msg = Encoding.UTF8.GetString(err).TrimEnd('\0');
-            SetStatus("Could not connect to Steam (" + msg + "). Make sure Steam is running and you own Titan Quest II.");
-            return false;
-        }
-        steamUp = true;
-        matchmaking = Steam.SteamAPI_SteamMatchmaking_v009();
-        utils = Steam.SteamAPI_SteamUtils_v010();
-        return true;
-    }
-
+    // Steam treats any process that connected as Titan Quest II as the running game until that
+    // process exits, so the window never connects itself: each refresh runs in a short-lived copy
+    // of this exe (see SteamWorker) that prints the results and exits.
     void StartRefresh()
     {
-        if (pollTimer.Enabled || !InitSteam()) return;
-        FindMyLobby();
-        if (infoPublished) WriteMyInfo();
-        Steam.SteamAPI_ISteamMatchmaking_AddRequestLobbyListDistanceFilter(matchmaking, Steam.DistanceWorldwide);
-        Steam.SteamAPI_ISteamMatchmaking_AddRequestLobbyListResultCountFilter(matchmaking, 500);
-        pendingCall = Steam.SteamAPI_ISteamMatchmaking_RequestLobbyList(matchmaking);
-        pendingDeadline = DateTime.Now.AddSeconds(15);
+        if (busy) { refreshQueued = true; return; }
+        busy = true;
+        refreshQueued = false;
         refreshButton.Enabled = false;
         SetStatus("Searching for games...");
-        pollTimer.Start();
+        string args = "--steam-worker";
+        if (infoPublished)
+            args += " " + (myDifficulty.SelectedIndex - 1) + " " + myLevel.SelectedIndex + " " + (myPlaystyle.SelectedIndex - 1);
+        var thread = new System.Threading.Thread(() =>
+        {
+            string output = null, error = null;
+            try { output = RunWorker(args); }
+            catch (Exception ex) { error = ex.Message; }
+            BeginInvoke((MethodInvoker)delegate { OnWorkerDone(output, error); });
+        });
+        thread.IsBackground = true;
+        thread.Start();
     }
 
-    void Poll()
+    static string RunWorker(string args)
     {
-        Steam.SteamAPI_RunCallbacks();
-        bool failed;
-        if (!Steam.SteamAPI_ISteamUtils_IsAPICallCompleted(utils, pendingCall, out failed))
+        var psi = new ProcessStartInfo(Application.ExecutablePath, args)
         {
-            if (DateTime.Now > pendingDeadline) Finish("Steam did not answer in time. Try Refresh again.");
-            return;
-        }
-        uint count = 0;
-        if (!Steam.SteamAPI_ISteamUtils_GetAPICallResult(utils, pendingCall, ref count, 4, Steam.LobbyMatchListCallback, out failed) || failed)
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            CreateNoWindow = true
+        };
+        psi.EnvironmentVariables["SteamAppId"] = AppId;
+        psi.EnvironmentVariables["SteamGameId"] = AppId;
+        using (var p = Process.Start(psi))
         {
-            Finish("The lobby search failed. Try Refresh again.");
-            return;
-        }
-        var found = new List<Lobby>();
-        for (int i = 0; i < count; i++)
-        {
-            ulong id = Steam.SteamAPI_ISteamMatchmaking_GetLobbyByIndex(matchmaking, i);
-            found.Add(new Lobby
+            var read = p.StandardOutput.ReadToEndAsync();
+            if (!read.Wait(25000))
             {
-                Id = id,
-                Players = Steam.SteamAPI_ISteamMatchmaking_GetNumLobbyMembers(matchmaking, id),
-                Limit = Steam.SteamAPI_ISteamMatchmaking_GetLobbyMemberLimit(matchmaking, id),
-                Difficulty = GameInfo.Read(matchmaking, id, GameInfo.DifficultyKey, 0, GameInfo.Difficulties.Length - 1),
-                Level = GameInfo.Read(matchmaking, id, GameInfo.LevelKey, 1, GameInfo.MaxLevel),
-                Playstyle = GameInfo.Read(matchmaking, id, GameInfo.PlaystyleKey, 0, GameInfo.Playstyles.Length - 1)
-            });
+                try { p.Kill(); } catch { }
+                throw new Exception("Steam did not answer in time. Try Refresh again.");
+            }
+            return read.Result;
         }
+    }
+
+    void OnWorkerDone(string output, string error)
+    {
+        busy = false;
+        refreshButton.Enabled = true;
+        ulong lobby = 0;
+        bool host = false;
+        var found = new List<Lobby>();
+        // Steam also prints its own messages to the worker's output; only our prefixed lines count.
+        foreach (string line in (output ?? "").Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] f = line.Split(' ');
+            if (f[0] == "ERR") error = line.Substring(4);
+            else if (f[0] == "ME" && f.Length == 3) { ulong.TryParse(f[1], out lobby); host = f[2] == "1"; }
+            else if (f[0] == "L" && f.Length == 7)
+                found.Add(new Lobby
+                {
+                    Id = ulong.Parse(f[1]), Players = int.Parse(f[2]), Limit = int.Parse(f[3]),
+                    Difficulty = int.Parse(f[4]), Level = int.Parse(f[5]), Playstyle = int.Parse(f[6])
+                });
+        }
+        if (error != null)
+        {
+            SetStatus(error);
+            if (refreshQueued) StartRefresh();
+            return;
+        }
+        myLobby = lobby;
+        iAmHost = host;
+        UpdateMyGame();
         // Own game first, then fullest games first.
         found.Sort((a, b) => (a.Id == myLobby) != (b.Id == myLobby) ? (a.Id == myLobby ? -1 : 1)
                            : b.Players != a.Players ? b.Players.CompareTo(a.Players) : a.Id.CompareTo(b.Id));
@@ -338,22 +347,11 @@ class MainForm : Form
                 myPlaystyle.SelectedIndex = mine.Playstyle + 1;
             }
         }
-        Finish(null);
-    }
-
-    // Steam knows which lobby the player's running game is in (the same info friends' "Join Game" uses).
-    void FindMyLobby()
-    {
-        myLobby = 0;
-        iAmHost = false;
-        ulong me = Steam.SteamAPI_ISteamUser_GetSteamID(Steam.SteamAPI_SteamUser_v023());
-        Steam.FriendGameInfo info;
-        if (Steam.SteamAPI_ISteamFriends_GetFriendGamePlayed(Steam.SteamAPI_SteamFriends_v017(), me, out info) &&
-            info.GameId == ulong.Parse(AppId))
-            myLobby = info.LobbyId;
-        if (myLobby != 0)
-            iAmHost = Steam.SteamAPI_ISteamMatchmaking_GetLobbyOwner(matchmaking, myLobby) == me;
-        UpdateMyGame();
+        Populate();
+        if (publishClicked && !iAmHost)
+            SetStatus(myLobby == 0 ? "Host a multiplayer game first, then click Publish." : "Only the host can set the game info.");
+        publishClicked = false;
+        if (refreshQueued) StartRefresh();
     }
 
     void UpdateMyGame()
@@ -363,38 +361,12 @@ class MainForm : Form
         copyMyIdButton.Enabled = myLobby != 0;
     }
 
+    // The worker writes the info (host only) during the refresh, so the list shows it straight away.
     void Publish()
     {
         infoPublished = true;
-        if (pollTimer.Enabled) return;  // the search in progress will apply it
-        if (!InitSteam()) return;
-        FindMyLobby();
-        if (!iAmHost)
-        {
-            Finish(myLobby == 0 ? "Host a game first, then click Publish." : "Only the host can set the game info.");
-            return;
-        }
-        // Refresh straight away so the list shows the published info (this also writes it).
+        publishClicked = true;
         StartRefresh();
-    }
-
-    // Writes the host's chosen info to their own lobby, only touching fields that changed.
-    void WriteMyInfo()
-    {
-        if (!iAmHost) return;
-        WriteField(GameInfo.DifficultyKey, myDifficulty.SelectedIndex - 1);
-        WriteField(GameInfo.LevelKey, myLevel.SelectedIndex);  // index 1 = level 1
-        WriteField(GameInfo.PlaystyleKey, myPlaystyle.SelectedIndex - 1);
-    }
-
-    void WriteField(string key, int value)
-    {
-        bool set = key == GameInfo.LevelKey ? value >= 1 : value >= 0;
-        string current = Marshal.PtrToStringAnsi(Steam.SteamAPI_ISteamMatchmaking_GetLobbyData(matchmaking, myLobby, key)) ?? "";
-        string wanted = set ? value.ToString() : "";
-        if (current == wanted) return;
-        if (set) Steam.SteamAPI_ISteamMatchmaking_SetLobbyData(matchmaking, myLobby, key, wanted);
-        else Steam.SteamAPI_ISteamMatchmaking_DeleteLobbyData(matchmaking, myLobby, key);
     }
 
     void CopyId(ulong id)
@@ -415,16 +387,6 @@ class MainForm : Form
             return;
         }
         Join(id);
-    }
-
-    // Shut Steam down after every search so Steam doesn't treat this tool as the running game.
-    void Finish(string error)
-    {
-        pollTimer.Stop();
-        if (steamUp) { Steam.SteamAPI_Shutdown(); steamUp = false; }
-        refreshButton.Enabled = true;
-        if (error != null) { SetStatus(error); return; }
-        Populate();
     }
 
     void Populate()
@@ -469,6 +431,13 @@ class MainForm : Form
 
     void Join(ulong id)
     {
+        // With the game closed, Steam has nothing to hand the join to.
+        if (Process.GetProcessesByName("TQ2-Win64-Shipping").Length == 0)
+        {
+            MessageBox.Show(this, "Titan Quest II isn't running.\n\nStart the game first, then click Join again.",
+                "TQ2 Lobby Browser", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
         try
         {
             Process.Start("steam://joinlobby/" + AppId + "/" + id);
@@ -480,25 +449,118 @@ class MainForm : Form
     void SetStatus(string text) { status.Text = text; }
 }
 
+// Runs in a short-lived child process (TQ2LobbyBrowser.exe --steam-worker [difficulty level playstyle]):
+// connects to Steam, finds the player's own lobby, writes their game info if given (host only),
+// prints the lobby list and exits. Exiting is what tells Steam the "game" has stopped.
+// Output lines: "ME <lobby> <host 0/1>", "L <id> <players> <limit> <difficulty> <level> <playstyle>", "ERR <message>".
+static class SteamWorker
+{
+    const ulong AppId = 1154030;
+
+    public static int Run(string[] args)
+    {
+        var err = new byte[1024];
+        if (Steam.SteamAPI_InitFlat(err) != 0)
+        {
+            Console.WriteLine("ERR Could not connect to Steam (" + Encoding.UTF8.GetString(err).TrimEnd('\0') +
+                              "). Make sure Steam is running and you own Titan Quest II.");
+            return 1;
+        }
+        try { return Search(args); }
+        finally { Steam.SteamAPI_Shutdown(); }
+    }
+
+    static int Search(string[] args)
+    {
+        IntPtr mm = Steam.SteamAPI_SteamMatchmaking_v009();
+        IntPtr utils = Steam.SteamAPI_SteamUtils_v010();
+
+        // Steam knows which lobby the player's running game is in (the same info friends' "Join Game" uses).
+        ulong me = Steam.SteamAPI_ISteamUser_GetSteamID(Steam.SteamAPI_SteamUser_v023());
+        ulong myLobby = 0;
+        Steam.FriendGameInfo info;
+        if (Steam.SteamAPI_ISteamFriends_GetFriendGamePlayed(Steam.SteamAPI_SteamFriends_v017(), me, out info) && info.GameId == AppId)
+            myLobby = info.LobbyId;
+        bool host = myLobby != 0 && Steam.SteamAPI_ISteamMatchmaking_GetLobbyOwner(mm, myLobby) == me;
+        Console.WriteLine("ME " + myLobby + " " + (host ? 1 : 0));
+
+        int difficulty, level, playstyle;
+        if (host && args.Length == 4 && int.TryParse(args[1], out difficulty) &&
+            int.TryParse(args[2], out level) && int.TryParse(args[3], out playstyle))
+        {
+            WriteField(mm, myLobby, GameInfo.DifficultyKey, difficulty, 0);
+            WriteField(mm, myLobby, GameInfo.LevelKey, level, 1);
+            WriteField(mm, myLobby, GameInfo.PlaystyleKey, playstyle, 0);
+        }
+
+        Steam.SteamAPI_ISteamMatchmaking_AddRequestLobbyListDistanceFilter(mm, Steam.DistanceWorldwide);
+        Steam.SteamAPI_ISteamMatchmaking_AddRequestLobbyListResultCountFilter(mm, 500);
+        ulong call = Steam.SteamAPI_ISteamMatchmaking_RequestLobbyList(mm);
+        DateTime deadline = DateTime.Now.AddSeconds(15);
+        bool failed;
+        while (!Steam.SteamAPI_ISteamUtils_IsAPICallCompleted(utils, call, out failed))
+        {
+            Steam.SteamAPI_RunCallbacks();
+            if (DateTime.Now > deadline)
+            {
+                Console.WriteLine("ERR Steam did not answer in time. Try Refresh again.");
+                return 1;
+            }
+            System.Threading.Thread.Sleep(50);
+        }
+        uint count = 0;
+        if (!Steam.SteamAPI_ISteamUtils_GetAPICallResult(utils, call, ref count, 4, Steam.LobbyMatchListCallback, out failed) || failed)
+        {
+            Console.WriteLine("ERR The lobby search failed. Try Refresh again.");
+            return 1;
+        }
+        for (int i = 0; i < count; i++)
+        {
+            ulong id = Steam.SteamAPI_ISteamMatchmaking_GetLobbyByIndex(mm, i);
+            Console.WriteLine("L " + id + " " +
+                Steam.SteamAPI_ISteamMatchmaking_GetNumLobbyMembers(mm, id) + " " +
+                Steam.SteamAPI_ISteamMatchmaking_GetLobbyMemberLimit(mm, id) + " " +
+                GameInfo.Read(mm, id, GameInfo.DifficultyKey, 0, GameInfo.Difficulties.Length - 1) + " " +
+                GameInfo.Read(mm, id, GameInfo.LevelKey, 1, GameInfo.MaxLevel) + " " +
+                GameInfo.Read(mm, id, GameInfo.PlaystyleKey, 0, GameInfo.Playstyles.Length - 1));
+        }
+        return 0;
+    }
+
+    // Writes one field of the host's game info, only if it changed. A value below min clears the field.
+    static void WriteField(IntPtr mm, ulong lobby, string key, int value, int min)
+    {
+        string current = Marshal.PtrToStringAnsi(Steam.SteamAPI_ISteamMatchmaking_GetLobbyData(mm, lobby, key)) ?? "";
+        string wanted = value >= min ? value.ToString() : "";
+        if (current == wanted) return;
+        if (wanted != "") Steam.SteamAPI_ISteamMatchmaking_SetLobbyData(mm, lobby, key, wanted);
+        else Steam.SteamAPI_ISteamMatchmaking_DeleteLobbyData(mm, lobby, key);
+    }
+}
+
 static class Program
 {
     const string AppId = "1154030";
     const string DllSubPath = @"TQ2\Binaries\Win64\wrapper\THQNOnline\steam\steam_api64.dll";
 
     [STAThread]
-    static void Main()
+    static int Main(string[] args)
     {
-        Application.EnableVisualStyles();
-        Application.SetCompatibleTextRenderingDefault(false);
-
+        bool worker = args.Length > 0 && args[0] == "--steam-worker";
         string dll = FindSteamApiDll();
         if (dll == null || Steam.LoadLibrary(dll) == IntPtr.Zero)
         {
-            MessageBox.Show("Could not find your Titan Quest II installation.\n\nMake sure the game is installed through Steam.",
-                "TQ2 Lobby Browser", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            return;
+            const string msg = "Could not find your Titan Quest II installation. Make sure the game is installed through Steam.";
+            if (worker) Console.WriteLine("ERR " + msg);
+            else MessageBox.Show(msg, "TQ2 Lobby Browser", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return 1;
         }
+        if (worker) return SteamWorker.Run(args);
+
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
         Application.Run(new MainForm());
+        return 0;
     }
 
     // Looks through every Steam library folder for the Titan Quest II install.

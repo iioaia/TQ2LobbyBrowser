@@ -68,7 +68,8 @@ The game only publishes a lobby ID and the player count for each game. That mean
 - It finds your Titan Quest II install through Steam and loads Valve's `steam_api64.dll` from the game's own folder. No game or Steam files are included or modified.
 - It asks Steam for the game's public lobbies (AppID `1154030`), worldwide.
 - **Join** opens a `steam://joinlobby/1154030/<lobby id>` link, which is the same thing that happens when you accept a friend's invite.
-- It only connects to Steam while searching and disconnects afterwards. That way Steam won't think the game is already running when you click Play.
+- Each search runs in a short-lived background copy of the browser that connects to Steam, gets the list and exits within a few seconds. Steam counts any program connected as Titan Quest II as "the game running" until it exits, so this keeps Steam from showing the game as running while only the browser is open, and lets you start or close the game normally.
+- **Join** checks that Titan Quest II is running first. With the game closed, Steam has nothing to hand the join to.
 
 ## Safety
 
