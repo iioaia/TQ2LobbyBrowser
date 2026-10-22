@@ -70,6 +70,17 @@ The game only publishes a lobby ID and the player count for each game. That mean
 - **Join** opens a `steam://joinlobby/1154030/<lobby id>` link, which is the same thing that happens when you accept a friend's invite.
 - It only connects to Steam while searching and disconnects afterwards. That way Steam won't think the game is already running when you click Play.
 
+## Safety
+
+The browser is a small, open-source program. Here's exactly what it does and doesn't do:
+
+- **No admin rights needed.** It runs as a normal program and never asks for administrator access.
+- **Doesn't touch the game.** It doesn't modify, patch or inject anything into Titan Quest II, and it doesn't change any game files. It loads Valve's own `steam_api64.dll` from your game folder, the same official Steam library the game uses, to talk to Steam.
+- **Writes nothing to your PC.** No files, no settings and no registry changes. The only thing it reads is Steam's install location from the registry and Steam's library list, to find your game folder.
+- **No internet connections of its own.** It only talks to the Steam client already running on your PC. There are no servers, no telemetry and no auto-updates.
+- **Nothing to install or uninstall.** To remove it, delete the exe.
+- **All the code is here.** It's one readable file, [`TQ2LobbyBrowser.cs`](TQ2LobbyBrowser.cs), and you can [build the exe yourself](#building-from-source) with the compiler that comes with Windows instead of downloading it.
+
 ## Privacy
 
 The browser doesn't collect or share any personal information.
@@ -96,3 +107,7 @@ C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /target:winexe /platform
 ## Disclaimer
 
 This is a fan-made tool. It isn't affiliated with or endorsed by THQ Nordic, Grimlore Games or Valve. A game update could change how multiplayer lobbies work and stop it from working.
+
+## License
+
+[MIT](LICENSE). You're free to use, change and share it.
